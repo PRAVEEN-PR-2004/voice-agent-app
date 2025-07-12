@@ -59,7 +59,7 @@ async function getAIResponse(message) {
     const response = await result.response;
     const reply = response.text();
     
-    console.log('✅ Gemini response received:', reply);
+    console.log('✅ gemini response received:', reply);
     return {
       reply: reply,
       provider: 'gemini-1.5-flash'
