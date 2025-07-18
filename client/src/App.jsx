@@ -1,7 +1,18 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
 import { Mic, MicOff, Send, Square, Volume2, MessageSquare, Zap, Sparkles, Bot } from 'lucide-react';
 import Home from './Home.jsx';
+
+const SUPPORTED_LANGUAGES = [
+  { code: 'en-US', label: 'English (US)' },
+  { code: 'hi-IN', label: 'Hindi' },
+  { code: 'fr-FR', label: 'French' },
+  { code: 'es-ES', label: 'Spanish' },
+  { code: 'de-DE', label: 'German' },
+  { code: 'ta-IN', label: 'Tamil' },
+  { code: 'ml-IN', label: 'Malayalam' }, // Added Malayalam
+  // Add more as needed
+];
 
 const App = () => {
   const [text, setText] = useState('');
@@ -15,6 +26,47 @@ const App = () => {
   const recognitionRef = useRef(null);
   const speechRef = useRef(null);
   const abortControllerRef = useRef(null);
+  const [selectedLang, setSelectedLang] = useState('en-US');
+  const [voices, setVoices] = useState([]);
+  const [selectedVoice, setSelectedVoice] = useState(null);
+  const [showNoVoiceMsg, setShowNoVoiceMsg] = useState(false);
+  const [hasWelcomed, setHasWelcomed] = useState(false);
+
+  // Load voices for speech synthesis
+  useEffect(() => {
+    const loadVoices = () => {
+      const allVoices = window.speechSynthesis.getVoices();
+      const filtered = allVoices.filter(v => v.lang === selectedLang);
+      setVoices(filtered);
+      setSelectedVoice(filtered[0] || null);
+    };
+    loadVoices();
+    window.speechSynthesis.onvoiceschanged = loadVoices;
+    // Cleanup
+    return () => { window.speechSynthesis.onvoiceschanged = null; };
+  }, [selectedLang]);
+
+  // Update showNoVoiceMsg when voices change
+  useEffect(() => {
+    setShowNoVoiceMsg(voices.length === 0);
+  }, [voices]);
+
+  // Welcome message when entering chat page
+  useEffect(() => {
+    if (page === 'chat' && !hasWelcomed) {
+      setHasWelcomed(true);
+      setReply('👋 Welcome! I am your voice agent. You can speak or type your message below.');
+      // Optionally, speak the welcome message
+      if (voices.length > 0 && selectedVoice) {
+        const utterance = new window.SpeechSynthesisUtterance('Welcome! I am your voice agent. You can speak or type your message below.');
+        utterance.lang = selectedLang;
+        utterance.voice = selectedVoice;
+        window.speechSynthesis.speak(utterance);
+      }
+    }
+    if (page === 'home') setHasWelcomed(false);
+    // eslint-disable-next-line
+  }, [page, voices, selectedVoice, selectedLang]);
 
   const handleCreateAgent = (prompt) => {
     setSystemPrompt(prompt);
@@ -39,7 +91,7 @@ const App = () => {
       
       recognition.continuous = false;
       recognition.interimResults = false;
-      recognition.lang = 'en-US';
+      recognition.lang = selectedLang;
       recognition.maxAlternatives = 1;
 
       recognition.onstart = () => {
@@ -89,9 +141,15 @@ const App = () => {
       // Create abort controller for cancellation
       abortControllerRef.current = new AbortController();
       
+      // Add language instruction to system prompt
+      let langInstruction = '';
+      const langObj = SUPPORTED_LANGUAGES.find(l => l.code === selectedLang);
+      if (langObj) {
+        langInstruction = `Respond in ${langObj.label}.`;
+      }
       const response = await axios.post('http://localhost:5001/chat', {
         message: message,
-        system_prompt: systemPrompt || undefined,
+        system_prompt: (langInstruction ? langInstruction + '\n' : '') + (systemPrompt || ''),
       }, {
         signal: abortControllerRef.current.signal
       });
@@ -104,6 +162,8 @@ const App = () => {
         console.log('🔊 Speaking response...');
         setIsSpeaking(true);
         const utterance = new SpeechSynthesisUtterance(response.data.reply);
+        utterance.lang = selectedLang;
+        if (selectedVoice) utterance.voice = selectedVoice;
         speechRef.current = utterance;
         
         utterance.onend = () => {
@@ -192,6 +252,30 @@ const App = () => {
             ← Back to Home
           </button>
         </div>
+        {/* Language and Voice Selectors */}
+        <div style={{ display: 'flex', gap: 16, marginBottom: 24 }}>
+          <div>
+            <label style={{ fontWeight: 600, fontSize: 15 }}>Language:</label><br />
+            <select value={selectedLang} onChange={e => setSelectedLang(e.target.value)} style={{ padding: 8, borderRadius: 8, border: '1px solid #cbd5e1', fontSize: 15 }}>
+              {SUPPORTED_LANGUAGES.map(lang => (
+                <option key={lang.code} value={lang.code}>{lang.label}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label style={{ fontWeight: 600, fontSize: 15 }}>Voice:</label><br />
+            <select value={selectedVoice ? selectedVoice.name : ''} onChange={e => setSelectedVoice(voices.find(v => v.name === e.target.value))} style={{ padding: 8, borderRadius: 8, border: '1px solid #cbd5e1', fontSize: 15 }}>
+              {voices.map(voice => (
+                <option key={voice.name} value={voice.name}>{voice.name}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+        {showNoVoiceMsg && (
+          <div style={{ color: '#e63946', background: '#fff3f3', border: '1px solid #e63946', borderRadius: 8, padding: 12, marginBottom: 16, fontWeight: 600 }}>
+            No voices are available for the selected language on your system/browser. Please try another language, use a different browser (like Edge), or install the language pack in your OS.
+          </div>
+        )}
         <div style={{ background: '#fff', borderRadius: 20, boxShadow: '0 4px 24px rgba(60,60,120,0.08)', padding: 32, marginBottom: 32 }}>
           {/* Voice Input Section */}
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: 32 }}>
