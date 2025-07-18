@@ -1,17 +1,11 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const axios = require('axios');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
-
-// Initialize Gemini
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || 'AIzaSyDRfjlK4WZrX_po-irJl-Cvxj3aLH6-vxo';
-console.log('🔑 Initializing Gemini API with key:', GEMINI_API_KEY.substring(0, 10) + '...');
-
-const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 
 // Simple rate limiting
 const requestCounts = new Map();
@@ -47,43 +41,21 @@ function checkRateLimit(ip) {
   return true;
 }
 
-// Get AI response using Gemini
-async function getAIResponse(message) {
-  console.log('🤖 Processing message with Gemini:', message);
-  
+// Get AI response using Python server
+async function getAIResponse(message, session_id) {
   try {
-    // Try gemini-1.5-flash first
-    console.log('🔄 Trying gemini-1.5-flash...');
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
-    const result = await model.generateContent(message);
-    const response = await result.response;
-    const reply = response.text();
-    
-    console.log('✅ gemini response received:', reply);
+    const response = await axios.post('http://localhost:5002/chat', {
+      message,
+      session_id
+    });
     return {
-      reply: reply,
-      provider: 'gemini-1.5-flash'
+      reply: response.data.reply,
+      provider: 'python-llm',
+      session_id: response.data.session_id
     };
   } catch (error) {
-    console.log('❌ gemini-1.5-flash failed:', error.message);
-    console.log('🔄 Trying gemini-1.5-pro...');
-    
-    try {
-      // Fallback to gemini-1.5-pro
-      const model2 = genAI.getGenerativeModel({ model: 'gemini-1.5-pro' });
-      const result2 = await model2.generateContent(message);
-      const response2 = await result2.response;
-      const reply2 = response2.text();
-      
-      console.log('✅ Gemini pro response received:', reply2);
-      return {
-        reply: reply2,
-        provider: 'gemini-1.5-pro'
-      };
-    } catch (error2) {
-      console.error('❌ All Gemini models failed:', error2.message);
-      throw new Error('Gemini API failed');
-    }
+    console.error('❌ Python LLM server failed:', error.message);
+    throw new Error('Python LLM server failed');
   }
 }
 
@@ -101,7 +73,7 @@ app.post('/api/text', async (req, res) => {
     });
   }
 
-  const { message } = req.body;
+  const { message, session_id } = req.body;
   console.log('📨 Received message:', message);
 
   if (!message || typeof message !== 'string') {
@@ -113,12 +85,13 @@ app.post('/api/text', async (req, res) => {
   }
 
   try {
-    const result = await getAIResponse(message);
+    const result = await getAIResponse(message, session_id);
     
     console.log('✅ Sending response:', result);
     res.json({ 
       reply: result.reply,
-      provider: result.provider
+      provider: result.provider,
+      session_id: result.session_id
     });
   } catch (err) {
     console.error('❌ AI Error:', err);
@@ -137,7 +110,7 @@ app.get('/api/health', (req, res) => {
     status: 'ok', 
     timestamp: new Date().toISOString(),
     apis: {
-      gemini: !!GEMINI_API_KEY
+      gemini: false // Removed Gemini health check
     },
     features: {
       text_chat: true,
@@ -152,6 +125,6 @@ app.listen(PORT, () => {
   console.log(`🌐 Server listening on port ${PORT}`);
   console.log(`🏥 Health check: http://localhost:${PORT}/api/health`);
   console.log('📝 Text endpoint: POST http://localhost:${PORT}/api/text');
-  console.log('🤖 Using Gemini API only');
+  console.log('🤖 Using Python LLM server');
   console.log('📊 Rate limit: 20 requests per minute');
 });
